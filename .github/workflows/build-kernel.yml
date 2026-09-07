@@ -1,0 +1,91 @@
+name: Build Gemstone Kernel DEB (Yocto)
+
+on:
+  workflow_dispatch: # Arayüzden "Run workflow" butonuyla manuel tetiklenir
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Free Disk Space (Runner Temizliği)
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache
+          sudo docker system prune -af || true
+          df -h
+
+      - name: Install Host Dependencies & Devbox
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl git binfmt-support qemu-user-static
+          curl -fsSL https://get.jetify.com/devbox | bash -s -- -f
+
+      - name: Clone T3 Gemstone SDK
+        run: |
+          git clone https://github.com/t3gemstone/sdk.git
+          cd sdk
+          ./setup.sh
+
+      - name: Fetch Repos & Setup Permissions
+        run: |
+          cd sdk
+          eval "$(devbox shell --print-env)"
+          task fetch
+          task permissions
+
+      - name: Inject Remoteproc Patch into meta-gemstone
+        run: |
+          cd sdk
+          PATCH_DIR="yocto/meta-gemstone/recipes-kernel/linux/files"
+          mkdir -p "$PATCH_DIR"
+
+          # 1. Yamayı oluştur
+          cat << 'EOF' > "$PATCH_DIR/0001-rproc-virtio-net-access-platform.patch"
+          --- a/drivers/remoteproc/remoteproc_virtio.c
+          +++ b/drivers/remoteproc/remoteproc_virtio.c
+          @@ -345,6 +345,9 @@ int rproc_add_virtio_dev(struct rproc_vdev *rvdev, int id)
+           	vdev->id.device = id;
+           	vdev->config = &rproc_virtio_config_ops;
+           	vdev->dev.parent = dev;
+           	vdev->dev.release = rproc_virtio_dev_release;
+           
+          +	if (id == VIRTIO_ID_NET)
+          +		__virtio_set_bit(vdev, VIRTIO_F_ACCESS_PLATFORM);
+          +
+           	ret = register_virtio_device(vdev);
+          EOF
+
+          # 2. meta-gemstone altındaki ilgili bbappend dosyasına yamayı ekle
+          BBAPPEND=$(find yocto/meta-gemstone/recipes-kernel/linux/ -name "*.bbappend" | head -n 1)
+          if [ -n "$BBAPPEND" ]; then
+            echo 'FILESEXTRAPATHS:prepend := "${THISDIR}/files:"' >> "$BBAPPEND"
+            echo 'SRC_URI:append = " file://0001-rproc-virtio-net-access-platform.patch"' >> "$BBAPPEND"
+          else
+            echo "BBAPPEND bulunamadı, kontrol ediniz."
+            exit 1
+          fi
+
+      - name: Build Kernel Packages with Yocto
+        run: |
+          cd sdk
+          eval "$(devbox shell --print-env)"
+          # Distrobox oluştur
+          task box
+          
+          # Distrobox içinde doğrudan Yocto ortamını kurup sadece kernel'ı derle
+          distrobox enter gemstone-distrobox -- bash -c '
+            cd /home/workdir
+            TEMPLATECONF=/home/workdir/yocto/meta-gemstone/conf/templates/t3-gem-o1/ \
+            source /home/workdir/yocto/poky/oe-init-build-env /home/workdir/build/t3-gem-o1
+            bitbake virtual/kernel
+          '
+
+      - name: Collect & Upload Kernel DEB Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: gemstone-kernel-debs
+          path: sdk/build/t3-gem-o1/tmp-musl/deploy/deb/t3-gem-o1/kernel-image-*.deb
+          if-no-files-found: error

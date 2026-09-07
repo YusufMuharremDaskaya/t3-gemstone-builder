@@ -41,36 +41,32 @@ jobs:
         run: |
           cd /home/workdir
 
-          # Sadece gerçek kernel tarifinde çalışan güvenli python enjeksiyonu
-          cat << 'EOF' > yocto/meta-gemstone/recipes-kernel/linux/linux-%.bbappend
-          do_patch:append() {
-              if [ "${PN}" != "linux-libc-headers" ]; then
-                  TARGET="${S}/drivers/remoteproc/remoteproc_virtio.c"
-                  if [ -f "$TARGET" ]; then
-                      python3 -c '
-          with open("'$TARGET'", "r") as f:
-              content = f.read()
+          # 1. Dosyayı güvenli bir şekilde yamalayacak harici bash scripti
+          cat << 'EOF' > /home/workdir/patch_virtio.sh
+          #!/usr/bin/env bash
+          TARGET="$1/drivers/remoteproc/remoteproc_virtio.c"
 
-          target_str = "ret = register_virtio_device(vdev);"
-          patch_str = "if (id == VIRTIO_ID_NET)\n\t\t__virtio_set_bit(vdev, VIRTIO_F_ACCESS_PLATFORM);\n\n\tret = register_virtio_device(vdev);"
-
-          if "VIRTIO_F_ACCESS_PLATFORM" not in content:
-              if target_str in content:
-                  content = content.replace(target_str, patch_str, 1)
-                  with open("'$TARGET'", "w") as f:
-                      f.write(content)
-                  print("VIRTIO_F_ACCESS_PLATFORM basariyla enjekte edildi.")
-              else:
-                  print("Hata: register_virtio_device satiri bulunamadi!")
-                  exit(1)
-          '
-                  fi
+          if [ -f "$TARGET" ]; then
+              if ! grep -q "VIRTIO_F_ACCESS_PLATFORM" "$TARGET"; then
+                  sed -i '/ret = register_virtio_device(vdev);/i \	if (id == VIRTIO_ID_NET)\n\t\t__virtio_set_bit(vdev, VIRTIO_F_ACCESS_PLATFORM);\n' "$TARGET"
+                  echo ">>> VIRTIO_F_ACCESS_PLATFORM basariyla eklendi: $TARGET"
               fi
+          fi
+          EOF
+          chmod +x /home/workdir/patch_virtio.sh
+
+          # 2. Sadece gerçek kernel tariflerini hedefleyen temiz bbappend dosyaları
+          mkdir -p yocto/meta-gemstone/recipes-kernel/linux
+          cat << 'EOF' > yocto/meta-gemstone/recipes-kernel/linux/linux-ti-staging_%.bbappend
+          do_patch:append() {
+              /home/workdir/patch_virtio.sh "${S}"
           }
           EOF
 
-          echo "linux-%.bbappend içeriği doğrulandı:"
-          cat yocto/meta-gemstone/recipes-kernel/linux/linux-%.bbappend
+          cp yocto/meta-gemstone/recipes-kernel/linux/linux-ti-staging_%.bbappend \
+             yocto/meta-gemstone/recipes-kernel/linux/linux-t3-gem-o1_%.bbappend 2>/dev/null || true
+
+          echo "Kernel bbappend dosyalari olusturuldu."
 
       - name: Run Bitbake for Kernel Packages
         run: |

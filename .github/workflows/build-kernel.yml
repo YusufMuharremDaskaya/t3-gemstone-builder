@@ -32,7 +32,6 @@ jobs:
         run: |
           git clone https://github.com/t3gemstone/sdk.git
           cd sdk
-          # Repoları repos.yml üzerinden doğrudan vcs ile çek
           vcs import . < repos.yml
 
       - name: Inject Remoteproc Patch into meta-gemstone
@@ -57,17 +56,24 @@ jobs:
            	ret = register_virtio_device(vdev);
           EOF
 
-          # 2. meta-gemstone altındaki linux tarifine yamayı ekle
-          BBAPPEND=$(find yocto/meta-gemstone/recipes-kernel/linux/ -name "*.bbappend" -o -name "*.bb" | head -n 1)
-          echo "Hedef tarif bulundu: $BBAPPEND"
-          echo 'FILESEXTRAPATHS:prepend := "${THISDIR}/files:"' >> "$BBAPPEND"
-          echo 'SRC_URI:append = " file://0001-rproc-virtio-net-access-platform.patch"' >> "$BBAPPEND"
+          # 2. t3-gem-o1'e ait kernel tarifini bul ve yamayı ona ekle
+          TARGET_RECIPE=$(find yocto/meta-gemstone/recipes-kernel/linux/ -name "*t3-gem-o1*.bb*" | head -n 1)
+          if [ -z "$TARGET_RECIPE" ]; then
+            TARGET_RECIPE=$(find yocto/meta-gemstone/recipes-kernel/linux/ -name "*.bb*" | grep -v "yocto" | head -n 1)
+          fi
+
+          echo "Hedef tarif belirlendi: $TARGET_RECIPE"
+          echo 'FILESEXTRAPATHS:prepend := "${THISDIR}/files:"' >> "$TARGET_RECIPE"
+          echo 'SRC_URI:append = " file://0001-rproc-virtio-net-access-platform.patch"' >> "$TARGET_RECIPE"
 
       - name: Run Bitbake for Kernel Packages
         run: |
           cd sdk
           export LC_ALL=en_US.UTF-8
           export LANG=en_US.UTF-8
+
+          # Eksik olan build dizinini önceden oluştur
+          mkdir -p build/t3-gem-o1
 
           # Yocto ortamını başlat ve doğrudan virtual/kernel paketlemesini tetikle
           TEMPLATECONF=$PWD/yocto/meta-gemstone/conf/templates/t3-gem-o1/ \

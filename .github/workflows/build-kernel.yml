@@ -1,14 +1,14 @@
-name: Build Gemstone Kernel DEB (Yocto)
+name: Build Gemstone Kernel DEB (Yocto Direct)
 
 on:
-  workflow_dispatch: # Arayüzden "Run workflow" butonuyla manuel tetiklenir
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Free Disk Space (Runner Temizliği)
+      - name: Free Disk Space
         run: |
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/lib/android
@@ -17,24 +17,23 @@ jobs:
           sudo docker system prune -af || true
           df -h
 
-      - name: Install Host Dependencies & Devbox
+      - name: Install Yocto & Build Host Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl git binfmt-support qemu-user-static
-          curl -fsSL https://get.jetify.com/devbox | bash -s -- -f
+          sudo apt-get install -y gawk wget git diffstat unzip texinfo gcc build-essential \
+            chrpath socat cpio python3 python3-pip python3-pexpect xz-utils debianutils \
+            iputils-ping python3-git python3-jinja2 libegl1-mesa libsdl1.2-dev \
+            pylint xterm python3-subunit mesa-common-dev zstd liblz4-tool file locales \
+            libyaml-dev
+          sudo locale-gen en_US.UTF-8
+          pip3 install vcstool
 
-      - name: Clone T3 Gemstone SDK
+      - name: Clone SDK & Fetch Repos
         run: |
           git clone https://github.com/t3gemstone/sdk.git
           cd sdk
-          ./setup.sh
-
-      - name: Fetch Repos & Setup Permissions
-        run: |
-          cd sdk
-          eval "$(devbox shell --print-env)"
-          task fetch
-          task permissions
+          # Repoları repos.yml üzerinden doğrudan vcs ile çek
+          vcs import . < repos.yml
 
       - name: Inject Remoteproc Patch into meta-gemstone
         run: |
@@ -58,34 +57,27 @@ jobs:
            	ret = register_virtio_device(vdev);
           EOF
 
-          # 2. meta-gemstone altındaki ilgili bbappend dosyasına yamayı ekle
-          BBAPPEND=$(find yocto/meta-gemstone/recipes-kernel/linux/ -name "*.bbappend" | head -n 1)
-          if [ -n "$BBAPPEND" ]; then
-            echo 'FILESEXTRAPATHS:prepend := "${THISDIR}/files:"' >> "$BBAPPEND"
-            echo 'SRC_URI:append = " file://0001-rproc-virtio-net-access-platform.patch"' >> "$BBAPPEND"
-          else
-            echo "BBAPPEND bulunamadı, kontrol ediniz."
-            exit 1
-          fi
+          # 2. meta-gemstone altındaki linux tarifine yamayı ekle
+          BBAPPEND=$(find yocto/meta-gemstone/recipes-kernel/linux/ -name "*.bbappend" -o -name "*.bb" | head -n 1)
+          echo "Hedef tarif bulundu: $BBAPPEND"
+          echo 'FILESEXTRAPATHS:prepend := "${THISDIR}/files:"' >> "$BBAPPEND"
+          echo 'SRC_URI:append = " file://0001-rproc-virtio-net-access-platform.patch"' >> "$BBAPPEND"
 
-      - name: Build Kernel Packages with Yocto
+      - name: Run Bitbake for Kernel Packages
         run: |
           cd sdk
-          eval "$(devbox shell --print-env)"
-          # Distrobox oluştur
-          task box
-          
-          # Distrobox içinde doğrudan Yocto ortamını kurup sadece kernel'ı derle
-          distrobox enter gemstone-distrobox -- bash -c '
-            cd /home/workdir
-            TEMPLATECONF=/home/workdir/yocto/meta-gemstone/conf/templates/t3-gem-o1/ \
-            source /home/workdir/yocto/poky/oe-init-build-env /home/workdir/build/t3-gem-o1
-            bitbake virtual/kernel
-          '
+          export LC_ALL=en_US.UTF-8
+          export LANG=en_US.UTF-8
+
+          # Yocto ortamını başlat ve doğrudan virtual/kernel paketlemesini tetikle
+          TEMPLATECONF=$PWD/yocto/meta-gemstone/conf/templates/t3-gem-o1/ \
+          source $PWD/yocto/poky/oe-init-build-env $PWD/build/t3-gem-o1
+
+          bitbake virtual/kernel
 
       - name: Collect & Upload Kernel DEB Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: gemstone-kernel-debs
-          path: sdk/build/t3-gem-o1/tmp-musl/deploy/deb/t3-gem-o1/kernel-image-*.deb
+          path: sdk/build/t3-gem-o1/tmp*/deploy/deb/**/kernel-image-*.deb
           if-no-files-found: error

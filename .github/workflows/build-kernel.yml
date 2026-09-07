@@ -52,7 +52,7 @@ jobs:
            
           +	if (id == VIRTIO_ID_NET)
           +		__virtio_set_bit(vdev, VIRTIO_F_ACCESS_PLATFORM);
-          +
+           
            	ret = register_virtio_device(vdev);
           EOF
 
@@ -71,9 +71,9 @@ jobs:
           export LC_ALL=en_US.UTF-8
           export LANG=en_US.UTF-8
 
-          # /home/workdir hardcoded yolunu sistem seviyesinde symlink ile eşle
+          # /home/workdir sembolik linkini mutlak yol olarak kur
           sudo mkdir -p /home
-          sudo ln -sfn "$PWD" /home/workdir
+          sudo ln -sfn "$(pwd)" /home/workdir
 
           # Build klasörünü aç
           mkdir -p build/t3-gem-o1
@@ -81,11 +81,6 @@ jobs:
           # Yocto ortamını başlat
           TEMPLATECONF=$PWD/yocto/meta-gemstone/conf/templates/t3-gem-o1/ \
           source $PWD/yocto/poky/oe-init-build-env $PWD/build/t3-gem-o1
-
-          # Oluşan bblayers.conf içindeki /home/workdir yollarını doğrula/düzelt
-          if [ -f conf/bblayers.conf ]; then
-            sed -i "s|/home/workdir|$PWD/../..|g" conf/bblayers.conf || true
-          fi
 
           # Kernel derlemesini başlat
           bitbake virtual/kernel

@@ -1,4 +1,4 @@
-name: Build Gemstone Kernel DEB (Yocto Direct)
+name: Build Gemstone Kernel DEB (Direct Fast Track)
 
 on:
   workflow_dispatch:
@@ -8,80 +8,72 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Free Disk Space
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache
-          sudo docker system prune -af || true
-          df -h
-
-      - name: Install Yocto & Build Host Dependencies
+      - name: Install Toolchain & Build Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gawk wget git diffstat unzip texinfo gcc build-essential \
-            chrpath socat cpio python3 python3-pip python3-pexpect xz-utils debianutils \
-            iputils-ping python3-git python3-jinja2 libegl1-mesa libsdl1.2-dev \
-            pylint xterm python3-subunit mesa-common-dev zstd liblz4-tool file locales \
-            libyaml-dev
-          sudo locale-gen en_US.UTF-8
-          pip3 install vcstool
+          sudo apt-get install -y \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            build-essential libncurses-dev bison flex libssl-dev libelf-dev \
+            bc git rsync kmod cpio debhelper rsync
 
-      - name: Setup Workdir & Clone SDK
+      - name: Clone TI Linux Kernel (6.6 LTS)
         run: |
-          sudo mkdir -p /home/workdir
-          sudo chown -R $USER:$USER /home/workdir
-          cd /home/workdir
+          # TI'ın t3-gemstone için kullandığı 6.6 staging kernel ağacını shallow çek (hız için)
+          git clone --depth 1 --branch ti-linux-6.6.y https://git.ti.com/git/ti-linux-kernel/ti-linux-kernel.git kernel
+          cd kernel
+          echo "Kernel sürümü ve commit:"
+          git log -1 --oneline
 
-          git clone https://github.com/t3gemstone/sdk.git .
-          vcs import . < repos.yml
-
-      - name: Inject Remoteproc Patch into meta-gemstone
+      - name: Apply Remoteproc Patch
         run: |
-          cd /home/workdir
-          PATCH_DIR="yocto/meta-gemstone/recipes-kernel/linux/files"
-          mkdir -p "$PATCH_DIR"
+          cd kernel
+          TARGET="drivers/remoteproc/remoteproc_virtio.c"
 
-          # 1. Bayt seviyesinde saf diff (base64 - boşluk/tab bozulması imkansız)
-          cat << 'EOF' | base64 -d > "$PATCH_DIR/0001-rproc-virtio-net-access-platform.patch"
-          LS0tIGEvZHJpdmVycy9yZW1vdGVwcm9jL3JlbW90ZXByb2NfdmlydGlvLmMKKysrIGIvZHJp
-          dmVycy9yZW1vdGVwcm9jL3JlbW90ZXByb2NfdmlydGlvLmMKQEAgLTM0NSw2ICszNDUsOSBA
-          QCBpbnQgcnByb2NfYWRkX3ZpcnRpb19kZXYoc3RydWN0IHJwcm9jX3ZkZXYgKnJ2ZGV2LCBp
-          bnQgaWQpCiAJdmRldi0+aWQuZGV2aWNlID0gaWQ7CiAJdmRldi0+Y29uZmlnID0gJnJwcm9j
-          X3ZpcnRpb19jb25maWdfb3BzOwogCXZkZXYtPmRldi5wYXJlbnQgPSBkZXY7CiAJdmRldi0+
-          ZGV2LnJlbGVhc2UgPSBycHJvY192aXJ0aW9fZGV2X3JlbGVhc2U7CisKKwlpZiAoaWQgPT0g
-          VklSVElPX0lEX05FVCkKKwkJX192aXJ0aW9fc2V0X2JpdCh2ZGV2LCBWSVJUSU9fRl9BQ0NF
-          U1NfUExBVEZPUk0pOwogCiAJcmV0ID0gcmVnaXN0ZXJfdmlydGlvX2RldmljZSh2ZGV2KTsK
-          IAlpZiAocmV0KSB7Cg==
-          EOF
+          if [ ! -f "$TARGET" ]; then
+            echo "Hata: $TARGET bulunamadi!"
+            exit 1
+          fi
 
-          # 2. Kesinleşen hedef tarif için standart bbappend
-          cat << 'EOF' > yocto/meta-gemstone/recipes-kernel/linux/linux-ti-staging_%.bbappend
-          FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
-          SRC_URI:append = " file://0001-rproc-virtio-net-access-platform.patch"
-          EOF
+          # VIRTIO_F_ACCESS_PLATFORM bayrağını C dosyasına doğrudan enjekte et
+          sed -i '/ret = register_virtio_device(vdev);/i \	if (id == VIRTIO_ID_NET)\n\t\t__virtio_set_bit(vdev, VIRTIO_F_ACCESS_PLATFORM);\n' "$TARGET"
 
-          # 3. Yama dosyasının bütünlüğünü kontrol et
-          git apply --check "$PATCH_DIR/0001-rproc-virtio-net-access-platform.patch" 2>/dev/null || true
-          echo "Patch ve bbappend hazirlandi."
+          # Doğrulama: diff çıktısını konsola bas
+          echo "=== Yapılan Değişiklik ==="
+          git diff "$TARGET"
 
-      - name: Run Bitbake for Kernel Packages
+          if ! grep -q "VIRTIO_F_ACCESS_PLATFORM" "$TARGET"; then
+            echo "Hata: Yama uygulanamadi!"
+            exit 1
+          fi
+
+      - name: Configure & Compile Kernel Debian Packages
         run: |
-          cd /home/workdir
-          export LC_ALL=en_US.UTF-8
-          export LANG=en_US.UTF-8
+          cd kernel
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
 
-          mkdir -p /home/workdir/build
+          # TI K3 / AM62x mimarisinin standart defconfig'ini hazırla
+          make defconfig
 
-          TEMPLATECONF=/home/workdir/yocto/meta-gemstone/conf/templates/t3-gem-o1/ \
-          source /home/workdir/yocto/poky/oe-init-build-env /home/workdir/build/t3-gem-o1
+          # Kart ve sürüm karışıklığı olmasın diye yerel sürüm etiketi ekle
+          scripts/config --set-str CONFIG_LOCALVERSION "-t3-gemstone"
+          
+          # Hızlı derleme için debug sembollerini kırp (paketi devasa boyutlardan kurtarır)
+          scripts/config --disable CONFIG_DEBUG_INFO
+          scripts/config --disable CONFIG_DEBUG_INFO_BTF
+          scripts/config --disable CONFIG_DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT
 
-          bitbake virtual/kernel
+          # Kernelin resmi Debian paketleyicisini çalıştır
+          # bindeb-pkg: source deb yerine sadece binary deb paketlerini üretir (çok daha hızlıdır)
+          make -j$(nproc) bindeb-pkg
 
-      - name: Collect & Upload Kernel DEB Artifacts
+      - name: List Generated Debian Packages
+        run: |
+          ls -lh *.deb
+
+      - name: Upload Kernel DEB Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: gemstone-kernel-debs
-          path: /home/workdir/build/t3-gem-o1/tmp*/deploy/deb/**/kernel-image-*.deb
+          path: "*.deb"
           if-no-files-found: error

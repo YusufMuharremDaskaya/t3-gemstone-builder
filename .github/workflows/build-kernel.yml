@@ -28,15 +28,20 @@ jobs:
           sudo locale-gen en_US.UTF-8
           pip3 install vcstool
 
-      - name: Clone SDK & Fetch Repos
+      - name: Setup Workdir & Clone SDK
         run: |
-          git clone https://github.com/t3gemstone/sdk.git
-          cd sdk
+          # Doğrudan /home/workdir oluşturup yetkilendir
+          sudo mkdir -p /home/workdir
+          sudo chown -R $USER:$USER /home/workdir
+          cd /home/workdir
+
+          # SDK'yı doğrudan /home/workdir içine çek (alt klasör olmadan)
+          git clone https://github.com/t3gemstone/sdk.git .
           vcs import . < repos.yml
 
       - name: Inject Remoteproc Patch into meta-gemstone
         run: |
-          cd sdk
+          cd /home/workdir
           PATCH_DIR="yocto/meta-gemstone/recipes-kernel/linux/files"
           mkdir -p "$PATCH_DIR"
 
@@ -62,25 +67,18 @@ jobs:
           SRC_URI:append = " file://0001-rproc-virtio-net-access-platform.patch"
           EOF
 
-          echo "linux-%.bbappend içeriği:"
+          echo "linux-%.bbappend başarıyla oluşturuldu:"
           cat yocto/meta-gemstone/recipes-kernel/linux/linux-%.bbappend
 
       - name: Run Bitbake for Kernel Packages
         run: |
-          cd sdk
+          cd /home/workdir
           export LC_ALL=en_US.UTF-8
           export LANG=en_US.UTF-8
 
-          # /home/workdir sembolik linkini mutlak yol olarak kur
-          sudo mkdir -p /home
-          sudo ln -sfn "$(pwd)" /home/workdir
-
-          # Build klasörünü aç
-          mkdir -p build/t3-gem-o1
-
-          # Yocto ortamını başlat
-          TEMPLATECONF=$PWD/yocto/meta-gemstone/conf/templates/t3-gem-o1/ \
-          source $PWD/yocto/poky/oe-init-build-env $PWD/build/t3-gem-o1
+          # Yocto ortamını doğrudan /home/workdir altında başlat
+          TEMPLATECONF=/home/workdir/yocto/meta-gemstone/conf/templates/t3-gem-o1/ \
+          source /home/workdir/yocto/poky/oe-init-build-env /home/workdir/build/t3-gem-o1
 
           # Kernel derlemesini başlat
           bitbake virtual/kernel
@@ -89,5 +87,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: gemstone-kernel-debs
-          path: sdk/build/t3-gem-o1/tmp*/deploy/deb/**/kernel-image-*.deb
+          path: /home/workdir/build/t3-gem-o1/tmp*/deploy/deb/**/kernel-image-*.deb
           if-no-files-found: error

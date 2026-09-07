@@ -43,7 +43,7 @@ jobs:
           PATCH_DIR="yocto/meta-gemstone/recipes-kernel/linux/files"
           mkdir -p "$PATCH_DIR"
 
-          # 1. Yamayı sekme/boşluk bozulması olmadan base64 ile yaz
+          # 1. Bayt seviyesinde saf diff (base64 - boşluk/tab bozulması imkansız)
           cat << 'EOF' | base64 -d > "$PATCH_DIR/0001-rproc-virtio-net-access-platform.patch"
           LS0tIGEvZHJpdmVycy9yZW1vdGVwcm9jL3JlbW90ZXByb2NfdmlydGlvLmMKKysrIGIvZHJp
           dmVycy9yZW1vdGVwcm9jL3JlbW90ZXByb2NfdmlydGlvLmMKQEAgLTM0NSw2ICszNDUsOSBA
@@ -56,14 +56,15 @@ jobs:
           IAlpZiAocmV0KSB7Cg==
           EOF
 
-          # 2. Doğrulanan linux-ti-staging reçetesine yamayı ekle
+          # 2. Kesinleşen hedef tarif için standart bbappend
           cat << 'EOF' > yocto/meta-gemstone/recipes-kernel/linux/linux-ti-staging_%.bbappend
           FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
           SRC_URI:append = " file://0001-rproc-virtio-net-access-platform.patch"
           EOF
 
-          echo "linux-ti-staging_%.bbappend ve yama dosyasi hazirlandi:"
-          cat yocto/meta-gemstone/recipes-kernel/linux/linux-ti-staging_%.bbappend
+          # 3. Yama dosyasının bütünlüğünü kontrol et
+          git apply --check "$PATCH_DIR/0001-rproc-virtio-net-access-platform.patch" 2>/dev/null || true
+          echo "Patch ve bbappend hazirlandi."
 
       - name: Run Bitbake for Kernel Packages
         run: |

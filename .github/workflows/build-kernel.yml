@@ -37,36 +37,33 @@ jobs:
           git clone https://github.com/t3gemstone/sdk.git .
           vcs import . < repos.yml
 
-      - name: Inject Remoteproc Hook into meta-gemstone
+      - name: Inject Remoteproc Patch into meta-gemstone
         run: |
           cd /home/workdir
+          PATCH_DIR="yocto/meta-gemstone/recipes-kernel/linux/files"
+          mkdir -p "$PATCH_DIR"
 
-          # 1. Dosyayı güvenli bir şekilde yamalayacak harici bash scripti
-          cat << 'EOF' > /home/workdir/patch_virtio.sh
-          #!/usr/bin/env bash
-          TARGET="$1/drivers/remoteproc/remoteproc_virtio.c"
-
-          if [ -f "$TARGET" ]; then
-              if ! grep -q "VIRTIO_F_ACCESS_PLATFORM" "$TARGET"; then
-                  sed -i '/ret = register_virtio_device(vdev);/i \	if (id == VIRTIO_ID_NET)\n\t\t__virtio_set_bit(vdev, VIRTIO_F_ACCESS_PLATFORM);\n' "$TARGET"
-                  echo ">>> VIRTIO_F_ACCESS_PLATFORM basariyla eklendi: $TARGET"
-              fi
-          fi
+          # 1. Yamayı sekme/boşluk bozulması olmadan base64 ile yaz
+          cat << 'EOF' | base64 -d > "$PATCH_DIR/0001-rproc-virtio-net-access-platform.patch"
+          LS0tIGEvZHJpdmVycy9yZW1vdGVwcm9jL3JlbW90ZXByb2NfdmlydGlvLmMKKysrIGIvZHJp
+          dmVycy9yZW1vdGVwcm9jL3JlbW90ZXByb2NfdmlydGlvLmMKQEAgLTM0NSw2ICszNDUsOSBA
+          QCBpbnQgcnByb2NfYWRkX3ZpcnRpb19kZXYoc3RydWN0IHJwcm9jX3ZkZXYgKnJ2ZGV2LCBp
+          bnQgaWQpCiAJdmRldi0+aWQuZGV2aWNlID0gaWQ7CiAJdmRldi0+Y29uZmlnID0gJnJwcm9j
+          X3ZpcnRpb19jb25maWdfb3BzOwogCXZkZXYtPmRldi5wYXJlbnQgPSBkZXY7CiAJdmRldi0+
+          ZGV2LnJlbGVhc2UgPSBycHJvY192aXJ0aW9fZGV2X3JlbGVhc2U7CisKKwlpZiAoaWQgPT0g
+          VklSVElPX0lEX05FVCkKKwkJX192aXJ0aW9fc2V0X2JpdCh2ZGV2LCBWSVJUSU9fRl9BQ0NF
+          U1NfUExBVEZPUk0pOwogCiAJcmV0ID0gcmVnaXN0ZXJfdmlydGlvX2RldmljZSh2ZGV2KTsK
+          IAlpZiAocmV0KSB7Cg==
           EOF
-          chmod +x /home/workdir/patch_virtio.sh
 
-          # 2. Sadece gerçek kernel tariflerini hedefleyen temiz bbappend dosyaları
-          mkdir -p yocto/meta-gemstone/recipes-kernel/linux
+          # 2. Doğrulanan linux-ti-staging reçetesine yamayı ekle
           cat << 'EOF' > yocto/meta-gemstone/recipes-kernel/linux/linux-ti-staging_%.bbappend
-          do_patch:append() {
-              /home/workdir/patch_virtio.sh "${S}"
-          }
+          FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
+          SRC_URI:append = " file://0001-rproc-virtio-net-access-platform.patch"
           EOF
 
-          cp yocto/meta-gemstone/recipes-kernel/linux/linux-ti-staging_%.bbappend \
-             yocto/meta-gemstone/recipes-kernel/linux/linux-t3-gem-o1_%.bbappend 2>/dev/null || true
-
-          echo "Kernel bbappend dosyalari olusturuldu."
+          echo "linux-ti-staging_%.bbappend ve yama dosyasi hazirlandi:"
+          cat yocto/meta-gemstone/recipes-kernel/linux/linux-ti-staging_%.bbappend
 
       - name: Run Bitbake for Kernel Packages
         run: |

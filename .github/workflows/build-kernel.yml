@@ -56,13 +56,13 @@ jobs:
            	ret = register_virtio_device(vdev);
           EOF
 
-          # 2. meta-gemstone altına doğrudan joker bir bbappend yaz (bütün linux tariflerini yakalar)
+          # 2. meta-gemstone altına joker bbappend yaz
           cat << 'EOF' > yocto/meta-gemstone/recipes-kernel/linux/linux-%.bbappend
           FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
           SRC_URI:append = " file://0001-rproc-virtio-net-access-platform.patch"
           EOF
 
-          echo "linux-%.bbappend başarıyla oluşturuldu:"
+          echo "linux-%.bbappend içeriği:"
           cat yocto/meta-gemstone/recipes-kernel/linux/linux-%.bbappend
 
       - name: Run Bitbake for Kernel Packages
@@ -71,13 +71,23 @@ jobs:
           export LC_ALL=en_US.UTF-8
           export LANG=en_US.UTF-8
 
-          # Eksik olan build dizinini önceden oluştur
+          # /home/workdir hardcoded yolunu sistem seviyesinde symlink ile eşle
+          sudo mkdir -p /home
+          sudo ln -sfn "$PWD" /home/workdir
+
+          # Build klasörünü aç
           mkdir -p build/t3-gem-o1
 
-          # Yocto ortamını başlat ve doğrudan virtual/kernel derle
+          # Yocto ortamını başlat
           TEMPLATECONF=$PWD/yocto/meta-gemstone/conf/templates/t3-gem-o1/ \
           source $PWD/yocto/poky/oe-init-build-env $PWD/build/t3-gem-o1
 
+          # Oluşan bblayers.conf içindeki /home/workdir yollarını doğrula/düzelt
+          if [ -f conf/bblayers.conf ]; then
+            sed -i "s|/home/workdir|$PWD/../..|g" conf/bblayers.conf || true
+          fi
+
+          # Kernel derlemesini başlat
           bitbake virtual/kernel
 
       - name: Collect & Upload Kernel DEB Artifacts

@@ -56,15 +56,14 @@ jobs:
            	ret = register_virtio_device(vdev);
           EOF
 
-          # 2. t3-gem-o1'e ait kernel tarifini bul ve yamayı ona ekle
-          TARGET_RECIPE=$(find yocto/meta-gemstone/recipes-kernel/linux/ -name "*t3-gem-o1*.bb*" | head -n 1)
-          if [ -z "$TARGET_RECIPE" ]; then
-            TARGET_RECIPE=$(find yocto/meta-gemstone/recipes-kernel/linux/ -name "*.bb*" | grep -v "yocto" | head -n 1)
-          fi
+          # 2. meta-gemstone altına doğrudan joker bir bbappend yaz (bütün linux tariflerini yakalar)
+          cat << 'EOF' > yocto/meta-gemstone/recipes-kernel/linux/linux-%.bbappend
+          FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
+          SRC_URI:append = " file://0001-rproc-virtio-net-access-platform.patch"
+          EOF
 
-          echo "Hedef tarif belirlendi: $TARGET_RECIPE"
-          echo 'FILESEXTRAPATHS:prepend := "${THISDIR}/files:"' >> "$TARGET_RECIPE"
-          echo 'SRC_URI:append = " file://0001-rproc-virtio-net-access-platform.patch"' >> "$TARGET_RECIPE"
+          echo "linux-%.bbappend başarıyla oluşturuldu:"
+          cat yocto/meta-gemstone/recipes-kernel/linux/linux-%.bbappend
 
       - name: Run Bitbake for Kernel Packages
         run: |
@@ -75,7 +74,7 @@ jobs:
           # Eksik olan build dizinini önceden oluştur
           mkdir -p build/t3-gem-o1
 
-          # Yocto ortamını başlat ve doğrudan virtual/kernel paketlemesini tetikle
+          # Yocto ortamını başlat ve doğrudan virtual/kernel derle
           TEMPLATECONF=$PWD/yocto/meta-gemstone/conf/templates/t3-gem-o1/ \
           source $PWD/yocto/poky/oe-init-build-env $PWD/build/t3-gem-o1
 

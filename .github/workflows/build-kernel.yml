@@ -30,44 +30,46 @@ jobs:
 
       - name: Setup Workdir & Clone SDK
         run: |
-          # Doğrudan /home/workdir oluşturup yetkilendir
           sudo mkdir -p /home/workdir
           sudo chown -R $USER:$USER /home/workdir
           cd /home/workdir
 
-          # SDK'yı doğrudan /home/workdir içine çek
           git clone https://github.com/t3gemstone/sdk.git .
           vcs import . < repos.yml
 
-      - name: Inject Remoteproc Patch into meta-gemstone
+      - name: Inject Remoteproc Hook into meta-gemstone
         run: |
           cd /home/workdir
-          PATCH_DIR="yocto/meta-gemstone/recipes-kernel/linux/files"
-          mkdir -p "$PATCH_DIR"
 
-          # 1. Yamayı oluştur
-          cat << 'EOF' > "$PATCH_DIR/0001-rproc-virtio-net-access-platform.patch"
-          --- a/drivers/remoteproc/remoteproc_virtio.c
-          +++ b/drivers/remoteproc/remoteproc_virtio.c
-          @@ -345,6 +345,9 @@ int rproc_add_virtio_dev(struct rproc_vdev *rvdev, int id)
-           	vdev->id.device = id;
-           	vdev->config = &rproc_virtio_config_ops;
-           	vdev->dev.parent = dev;
-           	vdev->dev.release = rproc_virtio_dev_release;
-           
-          +	if (id == VIRTIO_ID_NET)
-          +		__virtio_set_bit(vdev, VIRTIO_F_ACCESS_PLATFORM);
-           
-           	ret = register_virtio_device(vdev);
-          EOF
-
-          # 2. meta-gemstone altına joker bbappend yaz
+          # Sadece gerçek kernel tarifinde çalışan güvenli python enjeksiyonu
           cat << 'EOF' > yocto/meta-gemstone/recipes-kernel/linux/linux-%.bbappend
-          FILESEXTRAPATHS:prepend := "${THISDIR}/files:"
-          SRC_URI:append = " file://0001-rproc-virtio-net-access-platform.patch"
+          do_patch:append() {
+              if [ "${PN}" != "linux-libc-headers" ]; then
+                  TARGET="${S}/drivers/remoteproc/remoteproc_virtio.c"
+                  if [ -f "$TARGET" ]; then
+                      python3 -c '
+          with open("'$TARGET'", "r") as f:
+              content = f.read()
+
+          target_str = "ret = register_virtio_device(vdev);"
+          patch_str = "if (id == VIRTIO_ID_NET)\n\t\t__virtio_set_bit(vdev, VIRTIO_F_ACCESS_PLATFORM);\n\n\tret = register_virtio_device(vdev);"
+
+          if "VIRTIO_F_ACCESS_PLATFORM" not in content:
+              if target_str in content:
+                  content = content.replace(target_str, patch_str, 1)
+                  with open("'$TARGET'", "w") as f:
+                      f.write(content)
+                  print("VIRTIO_F_ACCESS_PLATFORM basariyla enjekte edildi.")
+              else:
+                  print("Hata: register_virtio_device satiri bulunamadi!")
+                  exit(1)
+          '
+                  fi
+              fi
+          }
           EOF
 
-          echo "linux-%.bbappend başarıyla oluşturuldu:"
+          echo "linux-%.bbappend içeriği doğrulandı:"
           cat yocto/meta-gemstone/recipes-kernel/linux/linux-%.bbappend
 
       - name: Run Bitbake for Kernel Packages
@@ -76,14 +78,11 @@ jobs:
           export LC_ALL=en_US.UTF-8
           export LANG=en_US.UTF-8
 
-          # Eksik olan build klasörünü oluştur
           mkdir -p /home/workdir/build
 
-          # Yocto ortamını başlat
           TEMPLATECONF=/home/workdir/yocto/meta-gemstone/conf/templates/t3-gem-o1/ \
           source /home/workdir/yocto/poky/oe-init-build-env /home/workdir/build/t3-gem-o1
 
-          # Kernel derlemesini başlat
           bitbake virtual/kernel
 
       - name: Collect & Upload Kernel DEB Artifacts

@@ -35,7 +35,7 @@ jobs:
           sudo chown -R $USER:$USER /home/workdir
           cd /home/workdir
 
-          # SDK'yı doğrudan /home/workdir içine çek (alt klasör olmadan)
+          # SDK'yı doğrudan /home/workdir içine çek
           git clone https://github.com/t3gemstone/sdk.git .
           vcs import . < repos.yml
 
@@ -76,7 +76,10 @@ jobs:
           export LC_ALL=en_US.UTF-8
           export LANG=en_US.UTF-8
 
-          # Yocto ortamını doğrudan /home/workdir altında başlat
+          # Eksik olan build klasörünü oluştur
+          mkdir -p /home/workdir/build
+
+          # Yocto ortamını başlat
           TEMPLATECONF=/home/workdir/yocto/meta-gemstone/conf/templates/t3-gem-o1/ \
           source /home/workdir/yocto/poky/oe-init-build-env /home/workdir/build/t3-gem-o1
 
